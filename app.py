@@ -7,6 +7,12 @@ Every time the user clicks "Run Episode", the server:
   3. Stitches the frames into an animated GIF
   4. Sends the GIF + episode length back to the browser
 
+This version uses a pure NumPy forward pass instead of PyTorch for
+inference, since the full torch install (even the CPU-only build) uses
+more RAM than fits on Render's free tier alongside gymnasium and pygame.
+The trained weights were exported from the original PyTorch model into
+ppo_cartpole_weights.npz - see extract_weights.py in the training repo.
+
 Deploy this file (not ppo_cartpole.py) to Render for the live demo.
 """
 
@@ -17,42 +23,27 @@ import io
 import base64
 
 import numpy as np
-import torch
-import torch.nn as nn
 import gymnasium as gym
 from PIL import Image
 from flask import Flask, render_template, jsonify
 
 app = Flask(__name__)
 
-MODEL_PATH = "ppo_cartpole_model.pt"
-OBS_DIM = 4
-N_ACTIONS = 2
+WEIGHTS_PATH = "ppo_cartpole_weights.npz"
+
+_weights = np.load(WEIGHTS_PATH)
+W1, B1 = _weights["w1"], _weights["b1"]
+W2, B2 = _weights["w2"], _weights["b2"]
+WP, BP = _weights["wp"], _weights["bp"]
 
 
-# Must match the architecture used in ppo_cartpole.py exactly, so the
-# saved weights load correctly.
-class ActorCritic(nn.Module):
-    def __init__(self, obs_dim, n_actions, hidden=64):
-        super().__init__()
-        self.shared = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.Tanh(),
-            nn.Linear(hidden, hidden),
-            nn.Tanh(),
-        )
-        self.policy_head = nn.Linear(hidden, n_actions)
-        self.value_head = nn.Linear(hidden, 1)
-
-    def forward(self, x):
-        z = self.shared(x)
-        return self.policy_head(z), self.value_head(z)
-
-
-device = torch.device("cpu")
-model = ActorCritic(OBS_DIM, N_ACTIONS).to(device)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-model.eval()
+def policy_forward(obs):
+    """Pure NumPy forward pass through the trained actor network.
+    Mirrors the PyTorch ActorCritic.shared + policy_head exactly."""
+    x = np.tanh(W1 @ obs + B1)
+    x = np.tanh(W2 @ x + B2)
+    logits = WP @ x + BP
+    return logits
 
 
 def run_episode_and_render():
@@ -64,10 +55,8 @@ def run_episode_and_render():
     done = False
     steps = 0
     while not done and steps < 500:
-        obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
-        with torch.no_grad():
-            logits, _ = model(obs_t)
-            action = torch.argmax(logits, dim=-1).item()
+        logits = policy_forward(obs.astype(np.float32))
+        action = int(np.argmax(logits))
         obs, _, terminated, truncated, _ = env.step(action)
         done = terminated or truncated
         frames.append(env.render())
