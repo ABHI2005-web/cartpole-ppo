@@ -46,11 +46,33 @@ def policy_forward(obs):
     return logits
 
 
+FRAME_SKIP = 3        # only keep every 3rd rendered frame for the GIF
+GIF_SCALE = 0.5        # shrink frame dimensions by this factor before encoding
+GIF_SIZE = None         # computed on first frame
+
+
+def _downsize(frame_array):
+    """Convert a raw RGB frame to a smaller PIL image to cut memory use."""
+    global GIF_SIZE
+    img = Image.fromarray(frame_array)
+    if GIF_SIZE is None:
+        w, h = img.size
+        GIF_SIZE = (int(w * GIF_SCALE), int(h * GIF_SCALE))
+    return img.resize(GIF_SIZE, Image.BILINEAR)
+
+
 def run_episode_and_render():
-    """Runs one greedy episode, returns (gif_bytes, episode_length)."""
+    """Runs one greedy episode, returns (gif_bytes, episode_length).
+
+    Only every FRAME_SKIP-th frame is kept, and frames are shrunk before
+    being held in memory, since a full 500-step episode at full resolution
+    can use 300+ MB of raw frame data alone - too much for a 512 MB
+    instance once Flask/gymnasium/pygame's own baseline usage is added.
+    """
     env = gym.make("CartPole-v1", render_mode="rgb_array")
     obs, _ = env.reset()
-    frames = [env.render()]
+
+    pil_frames = [_downsize(env.render())]
 
     done = False
     steps = 0
@@ -59,21 +81,22 @@ def run_episode_and_render():
         action = int(np.argmax(logits))
         obs, _, terminated, truncated, _ = env.step(action)
         done = terminated or truncated
-        frames.append(env.render())
         steps += 1
+        if steps % FRAME_SKIP == 0 or done:
+            pil_frames.append(_downsize(env.render()))
 
     env.close()
 
-    # Stitch frames into an in-memory animated GIF
-    pil_frames = [Image.fromarray(f) for f in frames]
+    # Stitch the (already small) frames into an in-memory animated GIF
     buf = io.BytesIO()
     pil_frames[0].save(
         buf,
         format="GIF",
         save_all=True,
         append_images=pil_frames[1:],
-        duration=33,  # ~30 fps
+        duration=33 * FRAME_SKIP,  # keep overall playback speed similar
         loop=0,
+        optimize=True,
     )
     buf.seek(0)
     return buf.read(), steps
