@@ -27,7 +27,7 @@ python app.py
 
 Then open http://localhost:5000 in your browser.
 
-## Deploy to Render (so you can share a link)
+## Deploy to Render 
 
 1. Push this folder to a GitHub repo (same steps as before).
 2. On [render.com](https://render.com), create a **New Web Service** and connect the repo.
@@ -37,7 +37,7 @@ Then open http://localhost:5000 in your browser.
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn app:app`
    - **Environment Variable**: `SDL_VIDEODRIVER=dummy` (required — lets CartPole render frames without a real display on the server)
-4. Deploy. Render will give you a public URL like `https://your-app.onrender.com` — that's the link to send your professor.
+4. Deploy. Render will give you a public URL like `https://your-app.onrender.com` - that's it 
 
 ## Notes
 
